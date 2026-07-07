@@ -88,3 +88,33 @@ try {
 
     exit;
 }
+
+
+/**
+ * التحقق من امتلاك المستخدم الحالي لدور معين.
+ */
+function authUserHasRole(string $roleName): bool
+{
+    global $pdo, $authUser;
+
+    if (empty($authUser['id'])) {
+        return false;
+    }
+
+    $statement = $pdo->prepare("
+        SELECT 1
+        FROM user_roles ur
+        INNER JOIN roles r ON r.id = ur.role_id
+        WHERE ur.user_id = ?
+          AND r.name = ?
+          AND r.is_active = TRUE
+        LIMIT 1
+    ");
+
+    $statement->execute([
+        $authUser['id'],
+        $roleName,
+    ]);
+
+    return (bool) $statement->fetchColumn();
+}

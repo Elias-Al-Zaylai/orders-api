@@ -4,6 +4,7 @@ header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 requirePermission('delete_requirement');
 
@@ -103,33 +104,15 @@ try {
 
     $delete->execute([$requirement_id]);
 
-    $remaining = $pdo->prepare("
-        SELECT COUNT(*) AS total
-        FROM requirements
-        WHERE order_id = ?
-    ");
-
-    $remaining->execute([$item['order_id']]);
-
-    $count = $remaining->fetch();
-
-    if ($count['total'] == 0) {
-
-        $updateOrder = $pdo->prepare("
-            UPDATE orders
-            SET status = 'cancelled',
-                updated_at = NOW()
-            WHERE id = ?
-        ");
-
-        $updateOrder->execute([$item['order_id']]);
-    }
+    // تحديث حالة الطلب تلقائيًا بعد حذف المطلوب
+    $newOrderStatus = updateOrderStatus($pdo, (int) $item['order_id']);
 
     $pdo->commit();
 
     echo json_encode([
         "status" => true,
-        "message" => "تم حذف المطلوب بنجاح"
+        "message" => "تم حذف المطلوب بنجاح",
+        "order_status" => $newOrderStatus
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Exception $e) {

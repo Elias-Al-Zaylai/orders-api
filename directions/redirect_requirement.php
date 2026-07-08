@@ -4,6 +4,7 @@ header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 requirePermission('redirect_requirement');
 
@@ -30,7 +31,7 @@ if (
 }
 
 $stmt = $pdo->prepare("
-    SELECT id, status
+    SELECT id, order_id, status
     FROM requirements
     WHERE id = ?
     LIMIT 1
@@ -123,6 +124,9 @@ try {
 
     $updateRequirement->execute([$requirement_id]);
 
+    // تحديث حالة الطلب تلقائيًا بعد إعادة التوجيه
+    $newOrderStatus = updateOrderStatus($pdo, (int) $requirement['order_id']);
+
     $notify = $pdo->prepare("
         INSERT INTO notifications (
             user_id,
@@ -145,7 +149,8 @@ try {
     echo json_encode([
         "status" => true,
         "message" => "تم إعادة توجيه المطلوب بنجاح",
-        "direction_id" => $directionId
+        "direction_id" => $directionId,
+        "order_status" => $newOrderStatus
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Exception $e) {

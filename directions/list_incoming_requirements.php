@@ -57,7 +57,7 @@ $stmt = $pdo->prepare("
         ON o.to_department_id = td.id
 
     WHERE r.status = 'new'
-      AND o.status = 'submitted'
+      AND o.status IN ('submitted', 'under_direction')
 
     ORDER BY r.created_at DESC
 ");

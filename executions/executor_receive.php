@@ -21,6 +21,7 @@ require_once __DIR__ . '/../middleware/auth.php';
 
 // التحقق من الصلاحيات
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 // يجب أن يمتلك المستخدم صلاحية استلام المطلوب
 requirePermission('receive_requirement');
@@ -240,6 +241,9 @@ try {
     }
 
 
+    // تحديث حالة الطلب تلقائيًا بعد استلام المنفذ
+    $newOrderStatus = updateOrderStatus($pdo, (int) $requirement['order_id']);
+
     /*
     |--------------------------------------------------------------------------
     | تجهيز بيانات سجل النشاط
@@ -352,7 +356,10 @@ try {
                 "received_by_executor",
 
             "status_name" =>
-                "استلمه المنفّذ"
+                "استلمه المنفّذ",
+
+            "order_status" =>
+                $newOrderStatus
         ]
     ], JSON_UNESCAPED_UNICODE);
 

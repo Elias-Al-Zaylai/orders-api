@@ -23,6 +23,7 @@ require_once __DIR__ . '/../middleware/auth.php';
 
 // التحقق من الصلاحيات
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 // صلاحية تنفيذ المطلوب
 requirePermission('execute_requirement');
@@ -469,6 +470,9 @@ $insertStatement->execute([
     }
 
 
+    // تحديث حالة الطلب تلقائيًا بعد تسجيل الإجراء
+    $newOrderStatus = updateOrderStatus($pdo, (int) $requirement['order_id']);
+
     /*
     |--------------------------------------------------------------------------
     | تسجيل النشاط
@@ -557,7 +561,8 @@ $insertStatement->execute([
             "requirement_title" =>
                 $requirement['requirement_title'],
             "status" => "action_done",
-            "status_name" => "تم التنفيذ"
+            "status_name" => "تم التنفيذ",
+            "order_status" => $newOrderStatus
         ]
     ], JSON_UNESCAPED_UNICODE);
 

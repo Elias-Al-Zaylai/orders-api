@@ -4,6 +4,7 @@ header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 requirePermission('update_requirement');
 
@@ -82,32 +83,15 @@ try {
 
     $updateRequirement->execute([$requirement_id]);
 
-    $countNotCancelled = $pdo->prepare("
-        SELECT COUNT(*) AS total
-        FROM requirements
-        WHERE order_id = ?
-        AND status != 'cancelled'
-    ");
-
-    $countNotCancelled->execute([$item['order_id']]);
-    $open = $countNotCancelled->fetch();
-
-    if ($open['total'] == 0) {
-        $updateOrder = $pdo->prepare("
-            UPDATE orders
-            SET status = 'cancelled',
-                updated_at = NOW()
-            WHERE id = ?
-        ");
-
-        $updateOrder->execute([$item['order_id']]);
-    }
+    // تحديث حالة الطلب تلقائيًا بعد إلغاء المطلوب
+    $newOrderStatus = updateOrderStatus($pdo, (int) $item['order_id']);
 
     $pdo->commit();
 
     echo json_encode([
         "status" => true,
-        "message" => "تم إلغاء المطلوب بنجاح"
+        "message" => "تم إلغاء المطلوب بنجاح",
+        "order_status" => $newOrderStatus
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Exception $e) {

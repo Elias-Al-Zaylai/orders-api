@@ -6,6 +6,7 @@ header("Content-Type: application/json; charset=UTF-8");
 // استدعاء ملفات التحقق من تسجيل الدخول والصلاحيات
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 // التحقق من امتلاك المستخدم صلاحية استلام الإجراء
 requirePermission('receive_execution');
@@ -299,6 +300,9 @@ try {
         );
     }
 
+    // تحديث حالة الطلب تلقائيًا بعد استلام مقدم الطلب للإجراء
+    $newOrderStatus = updateOrderStatus($pdo, (int) $requirement['order_id']);
+
     // تثبيت جميع العمليات
     $pdo->commit();
 
@@ -317,7 +321,9 @@ try {
             "order_number" =>
                 $requirement['order_number'],
             "requirement_status" =>
-                "received_by_requester"
+                "received_by_requester",
+            "order_status" =>
+                $newOrderStatus
         ]
     ], JSON_UNESCAPED_UNICODE);
 

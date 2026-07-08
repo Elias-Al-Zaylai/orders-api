@@ -23,6 +23,7 @@ require_once __DIR__ . '/../middleware/auth.php';
 
 // التحقق من الصلاحيات
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 // صلاحية تعديل الإجراء
 requirePermission('update_action');
@@ -404,6 +405,9 @@ try {
     }
 
 
+    // تحديث حالة الطلب تلقائيًا بعد تعديل الإجراء
+    $newOrderStatus = updateOrderStatus($pdo, (int) $action['order_id']);
+
     /*
     |--------------------------------------------------------------------------
     | تسجيل النشاط
@@ -514,7 +518,10 @@ try {
                 "action_done",
 
             "status_name" =>
-                "تم التنفيذ"
+                "تم التنفيذ",
+
+            "order_status" =>
+                $newOrderStatus
         ]
     ], JSON_UNESCAPED_UNICODE);
 

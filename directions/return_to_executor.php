@@ -6,6 +6,7 @@ header("Content-Type: application/json; charset=UTF-8");
 // ملفات التحقق والصلاحيات والإشعارات
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 require_once __DIR__ . '/../helpers/notification_helper.php';
 
 // مدير التوجيه يمتلك صلاحية الاعتماد
@@ -133,24 +134,11 @@ try {
         $requirementId
     ]);
 
-    /*
-     * إعادة حالة الطلب إلى تحت التنفيذ،
-     * لأن المطلوب عاد إلى المنفذ.
-     */
-    $updateOrder = $pdo->prepare("
-        UPDATE orders
-
-        SET
-            status = 'in_execution',
-            updated_at = NOW()
-
-        WHERE id = ?
-          AND status <> 'cancelled'
-    ");
-
-    $updateOrder->execute([
-        $requirement['order_id']
-    ]);
+    // تحديث حالة الطلب تلقائيًا بعد إعادة المطلوب للمنفذ
+    $newOrderStatus = updateOrderStatus(
+        $pdo,
+        (int) $requirement['order_id']
+    );
 
     // إرسال إشعار إلى المنفذ
     sendNotification(
@@ -168,7 +156,8 @@ try {
         "message" => "تمت إعادة المطلوب إلى المنفذ بنجاح",
         "requirement_id" => $requirementId,
         "requirement_status" =>
-            "returned_to_executor"
+            "returned_to_executor",
+        "order_status" => $newOrderStatus
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Throwable $e) {

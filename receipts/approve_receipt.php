@@ -6,6 +6,7 @@ header("Content-Type: application/json; charset=UTF-8");
 // ملفات التحقق والصلاحيات
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 
 // صلاحية اعتماد استلام الإجراءات
 requirePermission('approve_receipt');
@@ -172,21 +173,18 @@ try {
         $requirementId
     ]);
 
-    /*
-     * حساب المطاليب التي لم تنتهِ بعد.
-     *
-     * المطلوب المغلق أو الملغي لا يدخل في العدد.
-     */
+    // تحديث حالة الطلب تلقائيًا بعد إغلاق المطلوب
+    $orderStatus = updateOrderStatus(
+        $pdo,
+        (int) $requirement['order_id']
+    );
+
+    // عدد المطاليب التي لم تنتهِ بعد، للعرض فقط
     $remainingStatement = $pdo->prepare("
         SELECT COUNT(*)
-
         FROM requirements
-
         WHERE order_id = ?
-          AND status NOT IN (
-              'closed',
-              'cancelled'
-          )
+          AND status NOT IN ('closed', 'cancelled')
     ");
 
     $remainingStatement->execute([
@@ -195,36 +193,6 @@ try {
 
     $remainingRequirements =
         (int) $remainingStatement->fetchColumn();
-
-    /*
-     * إذا انتهت جميع مطاليب الطلب:
-     * تصبح حالة الطلب مكتمل.
-     *
-     * إذا بقيت مطاليب:
-     * تبقى حالة الطلب بانتظار الاعتماد.
-     */
-    if ($remainingRequirements === 0) {
-        $orderStatus = 'completed';
-    } else {
-        $orderStatus = 'waiting_approval';
-    }
-
-    // تحديث حالة الطلب
-    $updateOrderStatement = $pdo->prepare("
-        UPDATE orders
-
-        SET
-            status = ?,
-            updated_at = NOW()
-
-        WHERE id = ?
-          AND status <> 'cancelled'
-    ");
-
-    $updateOrderStatement->execute([
-        $orderStatus,
-        $requirement['order_id']
-    ]);
 
     // تأكيد جميع التغييرات
     $pdo->commit();

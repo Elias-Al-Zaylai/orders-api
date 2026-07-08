@@ -60,7 +60,7 @@ try {
         LEFT JOIN departments to_department
             ON to_department.id = o.to_department_id
 
-        WHERE o.status = 'submitted'
+        WHERE o.status IN ('submitted', 'under_direction')
 
           AND EXISTS (
               SELECT 1

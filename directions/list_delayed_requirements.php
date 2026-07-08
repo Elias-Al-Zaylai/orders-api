@@ -71,7 +71,7 @@ $stmt = $pdo->prepare("
     WHERE rd.allowed_end IS NOT NULL
       AND rd.allowed_end < NOW()
       AND r.status IN ('directed', 'received_by_executor')
-      AND o.status = 'submitted'
+      AND o.status NOT IN ('completed', 'cancelled')
 
     ORDER BY rd.allowed_end ASC
 ");

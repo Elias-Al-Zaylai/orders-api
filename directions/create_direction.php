@@ -6,6 +6,7 @@ header("Content-Type: application/json; charset=UTF-8");
 // ملفات المصادقة والصلاحيات والإشعارات
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
+require_once __DIR__ . '/../helpers/order_status_helper.php';
 require_once __DIR__ . '/../helpers/notification_helper.php';
 
 // السماح فقط لمن يمتلك صلاحية توجيه المطاليب
@@ -372,79 +373,22 @@ try {
         );
     }
 
-    /*
-     * حساب عدد المطاليب الفعالة التابعة للطلب.
-     *
-     * المطاليب الملغية لا تدخل في حساب حالة الطلب.
-     */
-    $requirementsCountStatement = $pdo->prepare("
-        SELECT
-            COUNT(*) AS total_requirements,
+    // تحديث حالة الطلب تلقائيًا حسب حالات المطاليب
+    $newOrderStatus = updateOrderStatus($pdo, $orderId);
 
-            SUM(
-                CASE
-                    WHEN status = 'new'
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS new_requirements
-
+    // عدد المطاليب الجديدة المتبقية بعد التوجيه
+    $remainingNewStatement = $pdo->prepare("
+        SELECT COUNT(*)
         FROM requirements
-
         WHERE order_id = ?
-          AND status <> 'cancelled'
+          AND status = 'new'
     ");
 
-    $requirementsCountStatement->execute([
+    $remainingNewStatement->execute([
         $orderId
     ]);
 
-    $requirementsCount = $requirementsCountStatement->fetch(
-        PDO::FETCH_ASSOC
-    );
-
-    $totalRequirements = (int) (
-        $requirementsCount['total_requirements'] ?? 0
-    );
-
-    $newRequirements = (int) (
-        $requirementsCount['new_requirements'] ?? 0
-    );
-
-    /*
-     * تحديد حالة الطلب:
-     *
-     * إذا بقي مطلوب واحد أو أكثر حالته new:
-     * تصبح حالة الطلب under_direction.
-     *
-     * إذا لم يبق أي مطلوب جديد:
-     * تصبح حالة الطلب directed.
-     */
-    if (
-        $totalRequirements > 0 &&
-        $newRequirements > 0
-    ) {
-        $newOrderStatus = 'under_direction';
-    } else {
-        $newOrderStatus = 'directed';
-    }
-
-    // تحديث حالة الطلب
-    $updateOrder = $pdo->prepare("
-        UPDATE orders
-
-        SET
-            status = ?,
-            updated_at = NOW()
-
-        WHERE id = ?
-          AND status <> 'cancelled'
-    ");
-
-    $updateOrder->execute([
-        $newOrderStatus,
-        $orderId
-    ]);
+    $newRequirements = (int) $remainingNewStatement->fetchColumn();
 
     // إرسال إشعار للمنفذ
     sendNotification(

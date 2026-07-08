@@ -45,9 +45,6 @@ $params = [];
 
 /*
  * عرض الطلبات التي أنشأها المستخدم الحالي فقط.
- *
- * لا نعتمد على role_id لأن المستخدم يمكن
- * أن يمتلك أكثر من دور من خلال جدول user_roles.
  */
 $where[] = "o.requester_id = ?";
 $params[] = (int) $authUser['id'];
@@ -84,6 +81,11 @@ if ($status !== '') {
     // الحالات المسموح بها للطلب
     $allowedStatuses = [
         'submitted',
+        'under_direction',
+        'directed',
+        'in_execution',
+        'waiting_receipt',
+        'waiting_approval',
         'completed',
         'cancelled'
     ];
@@ -138,6 +140,7 @@ if ($date !== '') {
         exit;
     }
 
+    // PostgreSQL يقبل تحويل التاريخ بهذا الشكل
     $where[] = "DATE(o.created_at) = ?";
     $params[] = $date;
 }
@@ -271,9 +274,7 @@ try {
     $orders = $ordersStatement->fetchAll();
 
     /*
-     * تحويل الأعداد النصية القادمة من MySQL
-     * إلى أعداد صحيحة، وإضافة إمكانية وجود
-     * إجراءات تنتظر استلام مقدم الطلب.
+     * تحويل الأعداد القادمة من PostgreSQL إلى أعداد صحيحة.
      */
     foreach ($orders as &$order) {
 
@@ -321,6 +322,7 @@ try {
 
     echo json_encode([
         "status" => false,
-        "message" => "حدث خطأ أثناء جلب الطلبات"
+        "message" => "حدث خطأ أثناء جلب الطلبات",
+        "error" => $error->getMessage()
     ], JSON_UNESCAPED_UNICODE);
 }

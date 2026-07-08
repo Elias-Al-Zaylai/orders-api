@@ -12,13 +12,37 @@ requirePermission('direct_requirement');
 
 try {
     /*
+     * الفكرة:
+     * موجّه الطلب لا يرى كل المنفذين.
+     * يرى فقط المنفذين التابعين لنفس إدارته.
+     *
+     * ملاحظة:
+     * مدير النظام يرى كل المنفذين حتى يستطيع الاختبار والإدارة.
+     */
+    $isAdmin = authUserHasRole('admin');
+    $departmentId = (int) ($authUser['department_id'] ?? 0);
+
+    if (!$isAdmin && $departmentId <= 0) {
+        echo json_encode([
+            "status" => true,
+            "message" => "لا توجد إدارة مرتبطة بالمستخدم الحالي",
+            "data" => []
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+
+    $whereDepartment = '';
+    $params = [];
+
+    if (!$isAdmin) {
+        $whereDepartment = "AND u.department_id = ?";
+        $params[] = $departmentId;
+    }
+
+    /*
      * جلب المنفذين المتاحين فقط.
-     *
-     * المنفذ لا يظهر إذا كان لديه مطلوب حالته:
-     *
-     * directed
-     * received_by_executor
-     * returned_to_executor
+     * المنفذ لا يظهر إذا كان لديه مطلوب نشط لم ينتهِ بعد.
      */
     $statement = $pdo->prepare("
         SELECT DISTINCT
@@ -54,6 +78,7 @@ try {
 
         WHERE u.is_active = TRUE
           AND p.permission_key = 'execute_requirement'
+          $whereDepartment
 
           AND NOT EXISTS (
               SELECT 1
@@ -74,16 +99,12 @@ try {
         ORDER BY u.name ASC
     ");
 
-    $statement->execute();
+    $statement->execute($params);
 
-    $executors = $statement->fetchAll(
-        PDO::FETCH_ASSOC
-    );
+    $executors = $statement->fetchAll(PDO::FETCH_ASSOC);
 
-    // تحويل رقم المنفذ إلى رقم صحيح
     foreach ($executors as &$executor) {
-        $executor['executor_id'] =
-            (int) $executor['executor_id'];
+        $executor['executor_id'] = (int) $executor['executor_id'];
     }
 
     unset($executor);

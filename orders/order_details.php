@@ -90,6 +90,56 @@ try {
         ===
         (int) $authUser['id'];
 
+
+    /*
+     * حماية تفاصيل الطلب:
+     * - مقدم الطلب يرى طلبه فقط.
+     * - موجّه الطلب يرى الطلب إذا كان مرسلًا إلى إدارته.
+     * - المنفذ يرى الطلب إذا كان عنده مطلوب موجّه ضمن هذا الطلب.
+     * - مدير النظام يرى الكل.
+     */
+    $isAdmin = authUserHasRole('admin');
+
+    $isDirectionDepartment =
+        !empty($authUser['department_id'])
+        &&
+        (int) ($order['to_department_id'] ?? 0) ===
+        (int) $authUser['department_id'];
+
+    $executorAccessStatement = $pdo->prepare("
+        SELECT 1
+        FROM requirements r
+        INNER JOIN requirement_directions rd
+            ON rd.requirement_id = r.id
+        WHERE r.order_id = ?
+          AND rd.executor_id = ?
+        LIMIT 1
+    ");
+
+    $executorAccessStatement->execute([
+        $orderId,
+        $authUser['id']
+    ]);
+
+    $isAssignedExecutor =
+        (bool) $executorAccessStatement->fetchColumn();
+
+    if (
+        !$isAdmin
+        && !$isOrderRequester
+        && !$isDirectionDepartment
+        && !$isAssignedExecutor
+    ) {
+        http_response_code(403);
+
+        echo json_encode([
+            "status" => false,
+            "message" => "ليس لديك صلاحية عرض هذا الطلب"
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+
     /*
      * جلب جميع مطاليب الطلب.
      */

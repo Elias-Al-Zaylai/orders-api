@@ -3,7 +3,6 @@
 // تحديد نوع الاستجابة بصيغة JSON مع دعم اللغة العربية
 header("Content-Type: application/json; charset=UTF-8");
 
-// استخدام ملفات تسجيل الدخول والصلاحيات الموجودة مسبقًا
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
 
@@ -11,8 +10,32 @@ require_once __DIR__ . '/../middleware/permission.php';
 requirePermission('direct_requirement');
 
 try {
+    /*
+     * موجّه الطلب يشاهد فقط الطلبات المرسلة إلى إدارته.
+     * مدير النظام يشاهد الجميع.
+     */
+    $isAdmin = authUserHasRole('admin');
+    $departmentId = (int) ($authUser['department_id'] ?? 0);
 
-    // تجهيز استعلام جلب الطلبات الواردة
+    if (!$isAdmin && $departmentId <= 0) {
+        echo json_encode([
+            "status" => true,
+            "message" => "لا توجد طلبات واردة",
+            "count" => 0,
+            "data" => []
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+
+    $whereDepartment = '';
+    $params = [];
+
+    if (!$isAdmin) {
+        $whereDepartment = "AND o.to_department_id = ?";
+        $params[] = $departmentId;
+    }
+
     $stmt = $pdo->prepare("
         SELECT
             o.id AS order_id,
@@ -61,6 +84,7 @@ try {
             ON to_department.id = o.to_department_id
 
         WHERE o.status IN ('submitted', 'under_direction')
+          $whereDepartment
 
           AND EXISTS (
               SELECT 1
@@ -72,13 +96,15 @@ try {
         ORDER BY o.created_at DESC
     ");
 
-    // تنفيذ الاستعلام
-    $stmt->execute();
-
-    // جلب جميع الطلبات
+    $stmt->execute($params);
     $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // إرسال البيانات إلى تطبيق Flutter
+    foreach ($orders as &$order) {
+        $order['order_id'] = (int) $order['order_id'];
+        $order['new_requirements_count'] = (int) $order['new_requirements_count'];
+    }
+    unset($order);
+
     echo json_encode([
         "status" => true,
         "message" => "تم جلب الطلبات الواردة بنجاح",
@@ -87,11 +113,8 @@ try {
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Throwable $e) {
-
-    // تحديد أن الخطأ حدث داخل السيرفر
     http_response_code(500);
 
-    // إرسال رسالة الخطأ
     echo json_encode([
         "status" => false,
         "message" => "حدث خطأ أثناء جلب الطلبات الواردة",

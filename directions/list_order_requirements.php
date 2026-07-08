@@ -3,18 +3,15 @@
 // تحديد نوع الاستجابة بصيغة JSON مع دعم اللغة العربية
 header("Content-Type: application/json; charset=UTF-8");
 
-// استدعاء ملفات تسجيل الدخول والصلاحيات
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
 
 // السماح فقط للمستخدم الذي يمتلك صلاحية توجيه المطاليب
 requirePermission('direct_requirement');
 
-// استقبال رقم الطلب من الرابط
-$orderId = $_GET['order_id'] ?? null;
+$orderId = (int) ($_GET['order_id'] ?? 0);
 
-// التأكد من إرسال رقم الطلب
-if (empty($orderId)) {
+if ($orderId <= 0) {
     http_response_code(400);
 
     echo json_encode([
@@ -25,24 +22,32 @@ if (empty($orderId)) {
     exit;
 }
 
-// تحويل رقم الطلب إلى رقم صحيح
-$orderId = (int) $orderId;
-
-// التأكد أن رقم الطلب صحيح
-if ($orderId <= 0) {
-    http_response_code(400);
-
-    echo json_encode([
-        "status" => false,
-        "message" => "رقم الطلب غير صحيح"
-    ], JSON_UNESCAPED_UNICODE);
-
-    exit;
-}
-
 try {
+    $isAdmin = authUserHasRole('admin');
+    $departmentId = (int) ($authUser['department_id'] ?? 0);
 
-    // جلب بيانات الطلب الأساسية
+    if (!$isAdmin && $departmentId <= 0) {
+        http_response_code(403);
+
+        echo json_encode([
+            "status" => false,
+            "message" => "لا توجد إدارة مرتبطة بالمستخدم الحالي"
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+
+    $whereDepartment = '';
+    $params = [$orderId];
+
+    if (!$isAdmin) {
+        $whereDepartment = "AND o.to_department_id = ?";
+        $params[] = $departmentId;
+    }
+
+    /*
+     * جلب بيانات الطلب مع التأكد أنه تابع لإدارة الموجّه.
+     */
     $orderStmt = $pdo->prepare("
         SELECT
             o.id AS order_id,
@@ -84,37 +89,30 @@ try {
             ON to_department.id = o.to_department_id
 
         WHERE o.id = ?
+          $whereDepartment
 
         LIMIT 1
     ");
 
-    // تنفيذ استعلام الطلب
-    $orderStmt->execute([$orderId]);
-
-    // جلب بيانات الطلب
+    $orderStmt->execute($params);
     $order = $orderStmt->fetch(PDO::FETCH_ASSOC);
 
-    // التأكد أن الطلب موجود
     if (!$order) {
         http_response_code(404);
 
         echo json_encode([
             "status" => false,
-            "message" => "الطلب غير موجود"
+            "message" => "الطلب غير موجود أو لا يتبع إدارة الموجّه"
         ], JSON_UNESCAPED_UNICODE);
 
         exit;
     }
 
-    // جلب المطاليب الجديدة التابعة للطلب فقط
     $requirementsStmt = $pdo->prepare("
         SELECT
             r.id AS requirement_id,
             r.order_id,
-
-            -- استخدام problem كعنوان لأن جدول requirements لا يحتوي على title
             r.problem AS title,
-
             r.problem,
             r.status AS requirement_status,
             r.created_at AS requirement_created_at,
@@ -124,8 +122,6 @@ try {
 
         WHERE r.order_id = ?
           AND r.status = 'new'
-
-          -- التأكد أن المطلوب لم يتم توجيهه سابقًا
           AND NOT EXISTS (
               SELECT 1
               FROM requirement_directions rd
@@ -135,13 +131,17 @@ try {
         ORDER BY r.created_at ASC
     ");
 
-    // تنفيذ استعلام المطاليب
     $requirementsStmt->execute([$orderId]);
-
-    // جلب جميع المطاليب الجديدة
     $requirements = $requirementsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // إرسال بيانات الطلب والمطاليب إلى Flutter
+    foreach ($requirements as &$requirement) {
+        $requirement['requirement_id'] = (int) $requirement['requirement_id'];
+        $requirement['order_id'] = (int) $requirement['order_id'];
+    }
+    unset($requirement);
+
+    $order['order_id'] = (int) $order['order_id'];
+
     echo json_encode([
         "status" => true,
         "message" => "تم جلب بيانات الطلب والمطاليب الجديدة بنجاح",
@@ -151,8 +151,6 @@ try {
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Throwable $e) {
-
-    // إرجاع خطأ من السيرفر
     http_response_code(500);
 
     echo json_encode([

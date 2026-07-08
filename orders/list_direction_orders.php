@@ -64,7 +64,8 @@ try {
      * التأكد هل المستخدم مدير نظام.
      *
      * مدير النظام يستطيع مشاهدة جميع الطلبات.
-     * أما الموجّه فيشاهد الطلبات التابعة لشركته وإدارته.
+     * أما الموجّه فيشاهد الطلبات المرسلة إلى إدارته فقط.
+     * لا نربطها بالشركة لأن المطلوب حسب النظام على مستوى الإدارة.
      */
     $adminStatement = $pdo->prepare("
         SELECT 1
@@ -95,11 +96,11 @@ try {
 
     /*
      * إذا لم يكن المستخدم مدير النظام،
-     * يتم عرض الطلبات المرسلة إلى شركته وإدارته فقط.
+     * يتم عرض الطلبات المرسلة إلى إدارة الموجّه فقط.
      */
     if (!$isAdmin) {
 
-        if (empty($authUser['company_id'])) {
+        if (empty($authUser['department_id'])) {
             echo json_encode([
                 "status" => true,
                 "message" => "لا توجد طلبات",
@@ -116,15 +117,8 @@ try {
             exit;
         }
 
-        $conditions[] = "o.to_company_id = :company_id";
-        $parameters[':company_id'] = $authUser['company_id'];
-
-        // إذا كان للمستخدم إدارة محددة نعرض طلبات إدارته فقط
-        if (!empty($authUser['department_id'])) {
-            $conditions[] = "o.to_department_id = :department_id";
-            $parameters[':department_id'] =
-                $authUser['department_id'];
-        }
+        $conditions[] = "o.to_department_id = :department_id";
+        $parameters[':department_id'] = (int) $authUser['department_id'];
     }
 
     // فلترة حالة الطلب

@@ -3,7 +3,6 @@
 // تحديد نوع الاستجابة ودعم اللغة العربية
 header("Content-Type: application/json; charset=UTF-8");
 
-// ملفات المصادقة والصلاحيات والإشعارات
 require_once __DIR__ . '/../middleware/auth.php';
 require_once __DIR__ . '/../middleware/permission.php';
 require_once __DIR__ . '/../helpers/order_status_helper.php';
@@ -12,13 +11,8 @@ require_once __DIR__ . '/../helpers/notification_helper.php';
 // السماح فقط لمن يمتلك صلاحية توجيه المطاليب
 requirePermission('direct_requirement');
 
-// استقبال البيانات المرسلة من تطبيق Flutter
-$data = json_decode(
-    file_get_contents("php://input"),
-    true
-);
+$data = json_decode(file_get_contents("php://input"), true);
 
-// التأكد أن البيانات المرسلة JSON صحيحة
 if (!is_array($data)) {
     http_response_code(400);
 
@@ -30,24 +24,13 @@ if (!is_array($data)) {
     exit;
 }
 
-// قراءة بيانات التوجيه
-$requirementId = $data['requirement_id'] ?? null;
-$executorId = $data['executor_id'] ?? null;
-
-$notesToExecutor = trim(
-    $data['notes_to_executor'] ?? ''
-);
-
+$requirementId = (int) ($data['requirement_id'] ?? 0);
+$executorId = (int) ($data['executor_id'] ?? 0);
+$notesToExecutor = trim($data['notes_to_executor'] ?? '');
 $allowedStart = $data['allowed_start'] ?? null;
 $allowedEnd = $data['allowed_end'] ?? null;
 
-// التحقق من البيانات المطلوبة
-if (
-    empty($requirementId) ||
-    empty($executorId) ||
-    empty($allowedStart) ||
-    empty($allowedEnd)
-) {
+if ($requirementId <= 0 || $executorId <= 0 || empty($allowedStart) || empty($allowedEnd)) {
     http_response_code(400);
 
     echo json_encode([
@@ -58,31 +41,10 @@ if (
     exit;
 }
 
-// تحويل الأرقام إلى أعداد صحيحة
-$requirementId = (int) $requirementId;
-$executorId = (int) $executorId;
-
-// التحقق من صحة الأرقام
-if ($requirementId <= 0 || $executorId <= 0) {
-    http_response_code(400);
-
-    echo json_encode([
-        "status" => false,
-        "message" => "رقم المطلوب أو رقم المنفذ غير صحيح"
-    ], JSON_UNESCAPED_UNICODE);
-
-    exit;
-}
-
-// تحويل التواريخ
 $allowedStartTimestamp = strtotime($allowedStart);
 $allowedEndTimestamp = strtotime($allowedEnd);
 
-// التأكد من صحة التواريخ
-if (
-    $allowedStartTimestamp === false ||
-    $allowedEndTimestamp === false
-) {
+if ($allowedStartTimestamp === false || $allowedEndTimestamp === false) {
     http_response_code(400);
 
     echo json_encode([
@@ -93,7 +55,6 @@ if (
     exit;
 }
 
-// يجب أن تكون النهاية بعد البداية
 if ($allowedEndTimestamp <= $allowedStartTimestamp) {
     http_response_code(400);
 
@@ -106,77 +67,72 @@ if ($allowedEndTimestamp <= $allowedStartTimestamp) {
 }
 
 try {
-    // بدء المعاملة
     $pdo->beginTransaction();
 
+    $isAdmin = authUserHasRole('admin');
+    $departmentId = (int) ($authUser['department_id'] ?? 0);
+
+    if (!$isAdmin && $departmentId <= 0) {
+        throw new Exception("لا توجد إدارة مرتبطة بالموجّه الحالي");
+    }
+
+    $whereDepartment = '';
+    $params = [$requirementId];
+
+    if (!$isAdmin) {
+        $whereDepartment = "AND o.to_department_id = ?";
+        $params[] = $departmentId;
+    }
+
     /*
-     * جلب المطلوب وقفل السجل أثناء عملية التوجيه.
-     *
-     * FOR UPDATE يمنع توجيه نفس المطلوب مرتين
-     * في نفس اللحظة.
+     * جلب المطلوب وقفل السجل، مع التأكد أنه تابع لإدارة الموجّه.
      */
     $requirementStatement = $pdo->prepare("
         SELECT
             r.id,
             r.order_id,
             r.problem,
-            r.status
+            r.status,
+            o.to_department_id
 
         FROM requirements r
 
+        INNER JOIN orders o
+            ON o.id = r.order_id
+
         WHERE r.id = ?
+          $whereDepartment
 
         LIMIT 1
 
         FOR UPDATE
     ");
 
-    $requirementStatement->execute([
-        $requirementId
-    ]);
+    $requirementStatement->execute($params);
+    $requirement = $requirementStatement->fetch(PDO::FETCH_ASSOC);
 
-    $requirement = $requirementStatement->fetch(
-        PDO::FETCH_ASSOC
-    );
-
-    // المطلوب غير موجود
     if (!$requirement) {
-        $pdo->rollBack();
-
-        http_response_code(404);
-
-        echo json_encode([
-            "status" => false,
-            "message" => "المطلوب غير موجود"
-        ], JSON_UNESCAPED_UNICODE);
-
-        exit;
+        throw new Exception("المطلوب غير موجود أو لا يتبع إدارة الموجّه");
     }
 
-    // لا يمكن توجيه مطلوب غير جديد
     if ($requirement['status'] !== 'new') {
-        $pdo->rollBack();
-
-        http_response_code(400);
-
-        echo json_encode([
-            "status" => false,
-            "message" => "هذا المطلوب تم توجيهه سابقًا أو حالته لا تسمح بالتوجيه"
-        ], JSON_UNESCAPED_UNICODE);
-
-        exit;
+        throw new Exception("هذا المطلوب تم توجيهه سابقًا أو حالته لا تسمح بالتوجيه");
     }
 
-    // رقم الطلب التابع له المطلوب
     $orderId = (int) $requirement['order_id'];
 
     /*
-     * التأكد أن المنفذ:
-     *
-     * 1. موجود.
-     * 2. نشط.
-     * 3. يمتلك صلاحية execute_requirement.
+     * التأكد أن المنفذ نشط ويمتلك صلاحية التنفيذ
+     * وأنه من نفس إدارة الموجّه فقط.
      */
+    $executorDepartmentSql = '';
+    $executorParams = [$executorId];
+
+    if (!$isAdmin) {
+        $executorDepartmentSql = "AND u.department_id = ?";
+        $executorParams[] = $departmentId;
+    }
+
     $executorStatement = $pdo->prepare("
         SELECT DISTINCT
             u.id,
@@ -196,44 +152,20 @@ try {
         WHERE u.id = ?
           AND u.is_active = TRUE
           AND p.permission_key = 'execute_requirement'
+          $executorDepartmentSql
 
         LIMIT 1
     ");
 
-    $executorStatement->execute([
-        $executorId
-    ]);
-
-    $executor = $executorStatement->fetch(
-        PDO::FETCH_ASSOC
-    );
+    $executorStatement->execute($executorParams);
+    $executor = $executorStatement->fetch(PDO::FETCH_ASSOC);
 
     if (!$executor) {
-        $pdo->rollBack();
-
-        http_response_code(404);
-
-        echo json_encode([
-            "status" => false,
-            "message" => "المنفذ غير موجود أو غير فعال أو لا يمتلك صلاحية التنفيذ"
-        ], JSON_UNESCAPED_UNICODE);
-
-        exit;
+        throw new Exception("المنفذ غير موجود أو غير فعال أو لا يتبع نفس الإدارة");
     }
 
     /*
-     * التأكد أن المنفذ غير مشغول بمطلوب آخر.
-     *
-     * الحالات التي تعني أن المنفذ ما زال مشغولًا:
-     *
-     * directed
-     * تم توجيه المطلوب إليه ولم يستلمه بعد.
-     *
-     * received_by_executor
-     * استلم المطلوب ويقوم بتنفيذه.
-     *
-     * returned_to_executor
-     * أُعيد المطلوب إليه لاستكمال التنفيذ.
+     * منع اختيار منفذ مشغول بمطلوب لم ينتهِ بعد.
      */
     $busyExecutorStatement = $pdo->prepare("
         SELECT
@@ -258,57 +190,26 @@ try {
         FOR UPDATE
     ");
 
-    $busyExecutorStatement->execute([
-        $executorId
-    ]);
+    $busyExecutorStatement->execute([$executorId]);
+    $busyRequirement = $busyExecutorStatement->fetch(PDO::FETCH_ASSOC);
 
-    $busyRequirement = $busyExecutorStatement->fetch(
-        PDO::FETCH_ASSOC
-    );
-
-    // المنفذ لديه مطلوب قائم
     if ($busyRequirement) {
-        $pdo->rollBack();
-
-        http_response_code(409);
-
-        echo json_encode([
-            "status" => false,
-            "message" => "هذا المنفذ مشغول حاليًا بمطلوب آخر"
-        ], JSON_UNESCAPED_UNICODE);
-
-        exit;
+        throw new Exception("هذا المنفذ مشغول حاليًا بمطلوب آخر");
     }
 
-    // التأكد أن المطلوب لم يتم توجيهه سابقًا
     $directionStatement = $pdo->prepare("
         SELECT id
-
         FROM requirement_directions
-
         WHERE requirement_id = ?
-
         LIMIT 1
     ");
 
-    $directionStatement->execute([
-        $requirementId
-    ]);
+    $directionStatement->execute([$requirementId]);
 
     if ($directionStatement->fetch(PDO::FETCH_ASSOC)) {
-        $pdo->rollBack();
-
-        http_response_code(400);
-
-        echo json_encode([
-            "status" => false,
-            "message" => "تم توجيه هذا المطلوب سابقًا"
-        ], JSON_UNESCAPED_UNICODE);
-
-        exit;
+        throw new Exception("تم توجيه هذا المطلوب سابقًا");
     }
 
-    // إضافة سجل التوجيه
     $insertDirection = $pdo->prepare("
         INSERT INTO requirement_directions (
             requirement_id,
@@ -320,16 +221,7 @@ try {
             created_at,
             updated_at
         )
-        VALUES (
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            ?,
-            NOW(),
-            NOW()
-        )
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
         RETURNING id
     ");
 
@@ -338,45 +230,29 @@ try {
         $authUser['id'],
         $executorId,
         $notesToExecutor,
-        date(
-            'Y-m-d H:i:s',
-            $allowedStartTimestamp
-        ),
-        date(
-            'Y-m-d H:i:s',
-            $allowedEndTimestamp
-        )
+        date('Y-m-d H:i:s', $allowedStartTimestamp),
+        date('Y-m-d H:i:s', $allowedEndTimestamp)
     ]);
 
-    // رقم سجل التوجيه
     $directionId = (int) $insertDirection->fetchColumn();
 
-    // تغيير حالة المطلوب إلى موجّه
     $updateRequirement = $pdo->prepare("
         UPDATE requirements
-
         SET
             status = 'directed',
             updated_at = NOW()
-
         WHERE id = ?
           AND status = 'new'
     ");
 
-    $updateRequirement->execute([
-        $requirementId
-    ]);
+    $updateRequirement->execute([$requirementId]);
 
     if ($updateRequirement->rowCount() === 0) {
-        throw new Exception(
-            "تعذر تحديث حالة المطلوب"
-        );
+        throw new Exception("تعذر تحديث حالة المطلوب");
     }
 
-    // تحديث حالة الطلب تلقائيًا حسب حالات المطاليب
     $newOrderStatus = updateOrderStatus($pdo, $orderId);
 
-    // عدد المطاليب الجديدة المتبقية بعد التوجيه
     $remainingNewStatement = $pdo->prepare("
         SELECT COUNT(*)
         FROM requirements
@@ -384,13 +260,9 @@ try {
           AND status = 'new'
     ");
 
-    $remainingNewStatement->execute([
-        $orderId
-    ]);
-
+    $remainingNewStatement->execute([$orderId]);
     $newRequirements = (int) $remainingNewStatement->fetchColumn();
 
-    // إرسال إشعار للمنفذ
     sendNotification(
         $pdo,
         $executorId,
@@ -398,7 +270,6 @@ try {
         'تم توجيه مطلوب جديد إليك، يرجى مراجعة تفاصيله.'
     );
 
-    // تثبيت العملية
     $pdo->commit();
 
     echo json_encode([
@@ -416,16 +287,14 @@ try {
     ], JSON_UNESCAPED_UNICODE);
 
 } catch (Throwable $e) {
-    // التراجع عن جميع التغييرات عند حدوث خطأ
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
 
-    http_response_code(500);
+    http_response_code(400);
 
     echo json_encode([
         "status" => false,
-        "message" => "فشل توجيه المطلوب",
-        "error" => $e->getMessage()
+        "message" => $e->getMessage()
     ], JSON_UNESCAPED_UNICODE);
 }

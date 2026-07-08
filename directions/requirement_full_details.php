@@ -65,6 +65,7 @@ try {
 
             to_company.name AS to_company_name,
             to_department.name AS to_department_name,
+            o.to_department_id,
 
             rd.id AS direction_id,
             rd.executor_id,
@@ -154,6 +155,26 @@ try {
         echo json_encode([
             "status" => false,
             "message" => "المطلوب غير موجود"
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+
+
+    /*
+     * تفاصيل المطلوب للموجّه تظهر فقط إذا كان المطلوب تابعًا لإدارته.
+     * مدير النظام مستثنى من هذا القيد.
+     */
+    if (
+        !authUserHasRole('admin')
+        &&
+        (int) ($details['to_department_id'] ?? 0) !== (int) ($authUser['department_id'] ?? 0)
+    ) {
+        http_response_code(403);
+
+        echo json_encode([
+            "status" => false,
+            "message" => "ليس لديك صلاحية عرض هذا المطلوب"
         ], JSON_UNESCAPED_UNICODE);
 
         exit;

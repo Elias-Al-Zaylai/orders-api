@@ -1,5 +1,6 @@
 <?php
 
+// تحديد نوع الاستجابة ودعم اللغة العربية
 header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/../middleware/auth.php';
@@ -8,69 +9,101 @@ require_once __DIR__ . '/../middleware/permission.php';
 requirePermission('direct_requirement');
 
 try {
-$stmt = $pdo->prepare("
-    SELECT
-        r.id AS requirement_id,
-        r.order_id,
-        r.problem AS title,
-        r.problem,
-        r.status AS requirement_status,
-        r.created_at AS requirement_created_at,
+    /*
+     * موجّه الطلب يشاهد المطاليب الجديدة المرسلة إلى إدارته فقط.
+     */
+    $isAdmin = authUserHasRole('admin');
+    $departmentId = (int) ($authUser['department_id'] ?? 0);
 
-        o.order_number,
-        o.document_number,
-        o.statement,
-        o.status AS order_status,
-        o.created_at AS order_created_at,
+    if (!$isAdmin && $departmentId <= 0) {
+        echo json_encode([
+            "status" => true,
+            "message" => "لا توجد مطاليب واردة",
+            "data" => []
+        ], JSON_UNESCAPED_UNICODE);
 
-        u.name AS requester_name,
+        exit;
+    }
 
-        rt.name AS request_type_name,
+    $whereDepartment = '';
+    $params = [];
 
-        fc.name AS from_company_name,
-        fd.name AS from_department_name,
+    if (!$isAdmin) {
+        $whereDepartment = "AND o.to_department_id = ?";
+        $params[] = $departmentId;
+    }
 
-        tc.name AS to_company_name,
-        td.name AS to_department_name
+    $stmt = $pdo->prepare("
+        SELECT
+            r.id AS requirement_id,
+            r.order_id,
+            r.problem AS title,
+            r.problem,
+            r.status AS requirement_status,
+            r.created_at AS requirement_created_at,
 
-    FROM requirements r
+            o.order_number,
+            o.document_number,
+            o.statement,
+            o.status AS order_status,
+            o.created_at AS order_created_at,
 
-    INNER JOIN orders o
-        ON r.order_id = o.id
+            u.name AS requester_name,
 
-    INNER JOIN users u
-        ON o.requester_id = u.id
+            rt.name AS request_type_name,
 
-    LEFT JOIN request_types rt
-        ON o.request_type_id = rt.id
+            fc.name AS from_company_name,
+            fd.name AS from_department_name,
 
-    LEFT JOIN companies fc
-        ON o.from_company_id = fc.id
+            tc.name AS to_company_name,
+            td.name AS to_department_name
 
-    LEFT JOIN departments fd
-        ON o.from_department_id = fd.id
+        FROM requirements r
 
-    LEFT JOIN companies tc
-        ON o.to_company_id = tc.id
+        INNER JOIN orders o
+            ON r.order_id = o.id
 
-    LEFT JOIN departments td
-        ON o.to_department_id = td.id
+        INNER JOIN users u
+            ON o.requester_id = u.id
 
-    WHERE r.status = 'new'
-      AND o.status IN ('submitted', 'under_direction')
+        LEFT JOIN request_types rt
+            ON o.request_type_id = rt.id
 
-    ORDER BY r.created_at DESC
-");
+        LEFT JOIN companies fc
+            ON o.from_company_id = fc.id
 
-    $stmt->execute();
+        LEFT JOIN departments fd
+            ON o.from_department_id = fd.id
+
+        LEFT JOIN companies tc
+            ON o.to_company_id = tc.id
+
+        LEFT JOIN departments td
+            ON o.to_department_id = td.id
+
+        WHERE r.status = 'new'
+          AND o.status IN ('submitted', 'under_direction')
+          $whereDepartment
+
+        ORDER BY r.created_at DESC
+    ");
+
+    $stmt->execute($params);
+    $requirements = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($requirements as &$requirement) {
+        $requirement['requirement_id'] = (int) $requirement['requirement_id'];
+        $requirement['order_id'] = (int) $requirement['order_id'];
+    }
+    unset($requirement);
 
     echo json_encode([
         "status" => true,
         "message" => "تم جلب المطاليب الواردة بنجاح",
-        "data" => $stmt->fetchAll(PDO::FETCH_ASSOC)
+        "data" => $requirements
     ], JSON_UNESCAPED_UNICODE);
 
-} catch (Exception $e) {
+} catch (Throwable $e) {
     http_response_code(500);
 
     echo json_encode([

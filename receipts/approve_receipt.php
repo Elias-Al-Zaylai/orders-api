@@ -41,13 +41,17 @@ try {
      */
     $requirementStatement = $pdo->prepare("
         SELECT
-            id,
-            order_id,
-            status
+            r.id,
+            r.order_id,
+            r.status,
+            o.to_department_id
 
-        FROM requirements
+        FROM requirements r
 
-        WHERE id = ?
+        INNER JOIN orders o
+            ON o.id = r.order_id
+
+        WHERE r.id = ?
 
         LIMIT 1
 
@@ -66,6 +70,21 @@ try {
     if (!$requirement) {
         throw new Exception(
             "المطلوب غير موجود"
+        );
+    }
+
+
+    /*
+     * مدير التوجيه يعتمد فقط مطاليب إدارته.
+     * مدير النظام مستثنى من القيد.
+     */
+    if (
+        !authUserHasRole('admin')
+        &&
+        (int) ($requirement['to_department_id'] ?? 0) !== (int) ($authUser['department_id'] ?? 0)
+    ) {
+        throw new Exception(
+            "ليس لديك صلاحية اعتماد هذا المطلوب"
         );
     }
 

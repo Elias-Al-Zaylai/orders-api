@@ -43,7 +43,8 @@ try {
             from_department.name AS from_department_name,
 
             to_company.name AS to_company_name,
-            to_department.name AS to_department_name
+            to_department.name AS to_department_name,
+            o.to_department_id
 
         FROM orders o
 
@@ -80,6 +81,26 @@ try {
         echo json_encode([
             "status" => false,
             "message" => "الطلب غير موجود"
+        ], JSON_UNESCAPED_UNICODE);
+
+        exit;
+    }
+
+
+    /*
+     * موجّه الطلب يشاهد تتبع الطلب فقط إذا كان مرسلًا إلى إدارته.
+     * مدير النظام يستطيع المشاهدة بدون هذا القيد.
+     */
+    if (
+        !authUserHasRole('admin')
+        &&
+        (int) ($order['to_department_id'] ?? 0) !== (int) ($authUser['department_id'] ?? 0)
+    ) {
+        http_response_code(403);
+
+        echo json_encode([
+            "status" => false,
+            "message" => "ليس لديك صلاحية عرض هذا الطلب"
         ], JSON_UNESCAPED_UNICODE);
 
         exit;

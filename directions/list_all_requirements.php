@@ -81,7 +81,7 @@ try {
      * التأكد هل المستخدم مدير نظام.
      *
      * مدير النظام يستطيع مشاهدة جميع المطاليب.
-     * الموجّه العادي يشاهد المطاليب المرسلة إلى شركته وإدارته.
+     * الموجّه العادي يشاهد المطاليب المرسلة إلى إدارته فقط.
      */
     $adminStatement = $pdo->prepare("
         SELECT 1
@@ -112,12 +112,11 @@ try {
 
     /*
      * إذا لم يكن المستخدم مدير النظام،
-     * يتم عرض المطاليب التابعة لشركته وإدارته فقط.
+     * يتم عرض المطاليب المرسلة إلى إدارة الموجّه فقط.
      */
     if (!$isAdmin) {
 
-        // إذا لم يكن للمستخدم شركة فلا توجد بيانات لعرضها
-        if (empty($authUser['company_id'])) {
+        if (empty($authUser['department_id'])) {
             echo json_encode([
                 "status" => true,
                 "message" => "لا توجد مطاليب",
@@ -134,23 +133,8 @@ try {
             exit;
         }
 
-        // عرض الطلبات المرسلة إلى شركة الموجّه
-        $conditions[] = "o.to_company_id = :company_id";
-
-        $parameters[':company_id'] =
-            (int) $authUser['company_id'];
-
-        /*
-         * إذا كان للموجّه إدارة محددة،
-         * نعرض المطاليب المرسلة إلى إدارته فقط.
-         */
-        if (!empty($authUser['department_id'])) {
-            $conditions[] =
-                "o.to_department_id = :department_id";
-
-            $parameters[':department_id'] =
-                (int) $authUser['department_id'];
-        }
+        $conditions[] = "o.to_department_id = :department_id";
+        $parameters[':department_id'] = (int) $authUser['department_id'];
     }
 
     // فلترة حسب حالة المطلوب

@@ -1,5 +1,6 @@
 <?php
 
+// تحديد نوع الاستجابة ودعم اللغة العربية
 header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/../middleware/auth.php';
@@ -9,18 +10,13 @@ requirePermission('direct_requirement');
 
 $data = json_decode(file_get_contents("php://input"), true);
 
-$direction_id = $data['direction_id'] ?? null;
-$executor_id = $data['executor_id'] ?? null;
-$notes_to_executor = trim($data['notes_to_executor'] ?? '');
-$allowed_start_date = $data['allowed_start'] ?? $data['allowed_start_date'] ?? null;
-$allowed_end_date = $data['allowed_end'] ?? $data['allowed_end_date'] ?? null;
+$directionId = (int) ($data['direction_id'] ?? 0);
+$executorId = (int) ($data['executor_id'] ?? 0);
+$notesToExecutor = trim($data['notes_to_executor'] ?? '');
+$allowedStart = $data['allowed_start'] ?? $data['allowed_start_date'] ?? null;
+$allowedEnd = $data['allowed_end'] ?? $data['allowed_end_date'] ?? null;
 
-if (
-    empty($direction_id) ||
-    empty($executor_id) ||
-    empty($allowed_start_date) ||
-    empty($allowed_end_date)
-) {
+if ($directionId <= 0 || $executorId <= 0 || empty($allowedStart) || empty($allowedEnd)) {
     http_response_code(400);
 
     echo json_encode([
@@ -31,91 +27,119 @@ if (
     exit;
 }
 
-$stmt = $pdo->prepare("
-    SELECT
-        rd.id AS direction_id,
-        rd.requirement_id,
-        r.status AS requirement_status
-    FROM requirement_directions rd
-    INNER JOIN requirements r ON r.id = rd.requirement_id
-    WHERE rd.id = ?
-    LIMIT 1
-");
+try {
+    $isAdmin = authUserHasRole('admin');
+    $departmentId = (int) ($authUser['department_id'] ?? 0);
 
-$stmt->execute([$direction_id]);
-$direction = $stmt->fetch();
+    if (!$isAdmin && $departmentId <= 0) {
+        throw new Exception("لا توجد إدارة مرتبطة بالموجّه الحالي");
+    }
 
-if (!$direction) {
-    http_response_code(404);
+    $whereDepartment = '';
+    $params = [$directionId];
+
+    if (!$isAdmin) {
+        $whereDepartment = "AND o.to_department_id = ?";
+        $params[] = $departmentId;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            rd.id AS direction_id,
+            rd.requirement_id,
+            r.status AS requirement_status
+
+        FROM requirement_directions rd
+
+        INNER JOIN requirements r
+            ON r.id = rd.requirement_id
+
+        INNER JOIN orders o
+            ON o.id = r.order_id
+
+        WHERE rd.id = ?
+          $whereDepartment
+
+        LIMIT 1
+    ");
+
+    $stmt->execute($params);
+    $direction = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$direction) {
+        throw new Exception("التوجيه غير موجود أو لا يتبع إدارة الموجّه");
+    }
+
+    if (!$isAdmin && $direction['requirement_status'] !== 'directed') {
+        throw new Exception("لا يمكن تعديل التوجيه بعد استلام المنفذ للمطلوب");
+    }
+
+    /*
+     * المنفذ الجديد يجب أن يكون من نفس إدارة الموجّه.
+     */
+    $executorDepartmentSql = '';
+    $executorParams = [$executorId];
+
+    if (!$isAdmin) {
+        $executorDepartmentSql = "AND u.department_id = ?";
+        $executorParams[] = $departmentId;
+    }
+
+    $checkExecutor = $pdo->prepare("
+        SELECT DISTINCT u.id
+
+        FROM users u
+
+        INNER JOIN user_roles ur
+            ON ur.user_id = u.id
+
+        INNER JOIN roles r
+            ON r.id = ur.role_id
+
+        WHERE u.id = ?
+          AND r.name = 'executor'
+          AND r.is_active = TRUE
+          AND u.is_active = TRUE
+          $executorDepartmentSql
+
+        LIMIT 1
+    ");
+
+    $checkExecutor->execute($executorParams);
+
+    if (!$checkExecutor->fetch()) {
+        throw new Exception("المنفذ غير موجود أو غير فعال أو لا يتبع نفس الإدارة");
+    }
+
+    $update = $pdo->prepare("
+        UPDATE requirement_directions
+        SET
+            executor_id = ?,
+            notes_to_executor = ?,
+            allowed_start = ?,
+            allowed_end = ?,
+            updated_at = NOW()
+        WHERE id = ?
+    ");
+
+    $update->execute([
+        $executorId,
+        $notesToExecutor,
+        $allowedStart,
+        $allowedEnd,
+        $directionId
+    ]);
 
     echo json_encode([
-        "status" => false,
-        "message" => "التوجيه غير موجود"
+        "status" => true,
+        "message" => "تم تعديل التوجيه بنجاح"
     ], JSON_UNESCAPED_UNICODE);
 
-    exit;
-}
-
-/*
-مدير التوجيه يعدل فقط إذا الحالة directed
-مدير النظام يعدل في أي وقت
-*/
-if (!authUserHasRole('admin') && $direction['requirement_status'] !== 'directed') {
+} catch (Throwable $e) {
     http_response_code(400);
 
     echo json_encode([
         "status" => false,
-        "message" => "لا يمكن تعديل التوجيه بعد استلام المنفذ للمطلوب"
+        "message" => $e->getMessage()
     ], JSON_UNESCAPED_UNICODE);
-
-    exit;
 }
-
-$checkExecutor = $pdo->prepare("
-    SELECT u.id
-    FROM users u
-    INNER JOIN user_roles ur ON ur.user_id = u.id
-    INNER JOIN roles r ON r.id = ur.role_id
-    WHERE u.id = ?
-      AND r.name = 'executor'
-      AND r.is_active = TRUE
-      AND u.is_active = TRUE
-    LIMIT 1
-");
-
-$checkExecutor->execute([$executor_id]);
-
-if (!$checkExecutor->fetch()) {
-    http_response_code(404);
-
-    echo json_encode([
-        "status" => false,
-        "message" => "المنفذ غير موجود أو غير فعال"
-    ], JSON_UNESCAPED_UNICODE);
-
-    exit;
-}
-
-$update = $pdo->prepare("
-    UPDATE requirement_directions
-    SET
-        executor_id = ?,
-        notes_to_executor = ?,
-        allowed_start = ?,
-        allowed_end = ?,
-        updated_at = NOW()
-    WHERE id = ?
-");
-
-$update->execute([
-    $executor_id,
-    $notes_to_executor,
-    $allowed_start_date,
-    $allowed_end_date,
-    $direction_id
-]);
-
-echo json_encode([
-    "status" => true,
-    "message" => "تم تعديل التوجيه بنجاح"
-], JSON_UNESCAPED_UNICODE);
